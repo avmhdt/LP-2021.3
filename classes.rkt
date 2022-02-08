@@ -116,6 +116,18 @@ apply-env :: Env x Var -> Value
 
 (define init-env empty-env)
 
+;------------------------------------
+(define (extend-env-with-self-and-super self super-name saved-env)
+  (lambda (svar)
+    (case svar
+            ((%self) self)
+            ((%super) super-name)
+            (else (apply-env saved-env svar)))))
+
+;------------------------------------
+
+
+
 ; call-by-value
 ; proc-val :: Var x Expr x Env -> Proc
 #;(define (proc-val var exp Δ)
@@ -184,21 +196,44 @@ apply-env :: Env x Var -> Value
    (field-names (list-of identifier?))))
 |#
 
+#|
 ; apply-method :: Method x Obj x ListOf(ExpVal) -> ExpVal
 (define apply-method
   (lambda (m self args)
     (if method? m
-        (let ([vars '(method->vars m)]
-              [body '(method->body m)]
-              [super-name '(method->super-name m)]
-              [fields '(method->fields m)])
+        (let ([vars (method-vars m)]
+              [body (method-body m)]
+              [super-name (method-super-name m)]
+              [fields (method-fields m)])
           (method (vars body super-name fields)
                   (value-of body
-                            '(extend-env* vars (map newref args)
-                                         (extend-env-with-self-and-super
-                                          self super-name
-                                          (extend-env field-names (object->fields self)
-                                                      (empty-env))))))))))
+                            (extend-env vars (map newref args)
+                                        (extend-env-with-self-and-super
+                                         self super-name
+                                         (extend-env fields (object-fields self)
+                                                     (empty-env))))))))))
+
+                            ;(extend-env* vars (map newref args)
+                            ;             (extend-env-with-self-and-super
+                            ;              self super-name
+                            ;              (extend-env field-names (object-fields self)
+                            ;                          (empty-env))))))))))
+
+|#
+(define (apply-method m self args)
+  ;(lambda (m self args)
+    (if (method? m)
+        (let ([vars (method-vars m)]
+              [body (method-body m)]
+              [super-name (method-super-name m)]
+              [fields (method-fields m)])
+          (value-of body (extend-env vars (map newref args)
+                                        (extend-env-with-self-and-super
+                                         self super-name
+                                         (extend-env fields (object-fields self)
+                                                     empty-env)))))(null)))
+
+
 
 ; ClassEnv = Listof(List(ClassName, Class))
 ;the-class-env :: ClassEnv
@@ -333,20 +368,20 @@ apply-env :: Env x Var -> Value
   (lambda (c-name name)
     (let ([this-class (lookup-class c-name)])
       (if (void? this-class) (display "Classe não encontrada\n")
-          ((let ([m-env (class-method-env this-class)])
-             (let ([maybe-pair (memq name 'm-env)])
+          (let ([m-env (class-method-env this-class)])
+             (let ([maybe-pair (assq name m-env)])
                (if (pair? maybe-pair) (cadr maybe-pair)
-                   (display "Método não encontrado\n")))))))))
+                   (display "Método não encontrado\n"))))))))
 
 ; method-decls->method-env :: Listof(MethodDecl) x ClassName x Listof(FieldName) -> MethodEnv
 (define method-decls->method-env
   (lambda (m-decls super-name field-names)
     (map
      (lambda (m-decl)
-       (let ([method-name (car m-decl)]
-             [vars (cadr m-decl)]
-             [body (caddr m-decl)])
-         (method vars body super-name field-names)))
+       (let ([method-name (cadr m-decl)]
+             [vars (caddr m-decl)]
+             [body (cadddr m-decl)])
+         (list method-name (method vars body super-name field-names))))
      m-decls)))
 
 ; merge-method-envs :: MethodEnv x MethodEnv -> MethodEnv     Função para juntar ambientes de métodos de duas classes
@@ -364,57 +399,62 @@ apply-env :: Env x Var -> Value
 ;------------------------------------------------------------------------------------------------------------------------------------------------
 ; Comportamento das expressões
 (define (value-of exp Δ)
-  (define type (car exp))
-  ; ----------- Retirado do IREF: ------------
-  (cond [(equal? type 'lit) (cadr exp)]
-        ; call-by-value e call-by-reference
-        ;[(equal? type 'var) (deref (apply-env Δ (cadr exp)))]
-        ; call-by-name
-        [(equal? type 'var) (define v (cadr exp))
-                            (if (thunk? v) (value-of (thunk-exp v) (thunk-env v))
-                                (deref (apply-env Δ v)))]
-        [(equal? type 'dif) (- (value-of (cadr exp) Δ) (value-of (caddr exp) Δ))]
-        [(equal? type 'zero?) (= (value-of (cadr exp) Δ) 0)]
-        [(equal? type 'let) (value-of (cadddr exp) (extend-env (cadr exp) (newref (value-of (caddr exp) Δ)) Δ))]
-        [(equal? type 'if) (if (value-of (cadr exp) Δ)
-                               (value-of (caddr exp) Δ) (value-of (cadddr exp) Δ))]
-        [(equal? type 'proc) (proc-val (cadr exp) (caddr exp) Δ)]
+  (if (list? exp)
+      (let
+          ([type (car exp)])
+      ; ----------- Retirado do IREF: ------------
+        (cond [(equal? type 'lit) (cadr exp)]
+              ; call-by-value e call-by-reference
+              ;[(equal? type 'var) (deref (apply-env Δ (cadr exp)))]
+              ; call-by-name
+              [(equal? type 'var) (define v (cadr exp))
+                                  (if (thunk? v) (value-of (thunk-exp v) (thunk-env v))
+                                      (deref (apply-env Δ v)))]
+              [(equal? type 'dif) (- (value-of (cadr exp) Δ) (value-of (caddr exp) Δ))]
+              [(equal? type 'zero?) (= (value-of (cadr exp) Δ) 0)]
+              [(equal? type 'let) (value-of (cadddr exp) (extend-env (cadr exp) (newref (value-of (caddr exp) Δ)) Δ))]
+              [(equal? type 'if) (if (value-of (cadr exp) Δ)
+                                     (value-of (caddr exp) Δ) (value-of (cadddr exp) Δ))]
+              [(equal? type 'proc) (proc-val (cadr exp) (caddr exp) Δ)]
         
-        [(equal? type 'letrec) (value-of (car (cddddr exp)) (extend-env-rec (cadr exp) (caddr exp) (cadddr exp) Δ))]
+              [(equal? type 'letrec) (value-of (car (cddddr exp)) (extend-env-rec (cadr exp) (caddr exp) (cadddr exp) Δ))]
 
-        [(equal? type 'set) (let ([v (value-of (caddr exp) Δ)])
-                              (setref! (apply-env Δ (cadr exp)) v)
-                              v)]
+              [(equal? type 'set) (let ([v (value-of (caddr exp) Δ)])
+                                    (setref! (apply-env Δ (cadr exp)) v)
+                                    v)]
         
-        [(equal? type 'begin) (foldl (lambda (e acc)
-                                       (value-of e Δ))
-                                     (value-of (cadr exp) Δ)
-                                     (cddr exp))]
+              [(equal? type 'begin) (foldl (lambda (e acc)
+                                             (value-of e Δ))
+                                           (value-of (cadr exp) Δ)
+                                           (cddr exp))]
         
-        ; ----------- Implementações da linguagem CLASSES: ------------
-        [(equal? type 'self) (apply-env Δ '%self)]
-        [(equal? type 'send) (let ([args (value-of (caddr exp) Δ)]
-                                   [obj (value-of (car exp) Δ)])
-                               (apply-method
-                                 (find-method '(object->class-name obj) (cadr exp))
-                                  obj
-                                  args))]
-        [(equal? type 'super) (let ([args (value-of (cadr exp) Δ)]
-                                    [obj (apply-env Δ '%self)])
-                                (apply-method
-                                 (find-method (apply-env Δ '%super) (car exp))
-                                 obj
-                                 args))]
-        [(equal? type 'new) (let ([args (values-of-exps (caddr exp) Δ)]
-                                  [obj (new-object (cadr exp))])
-                              (apply-method
-                               (find-method (object-class-name obj) 'initialize)
-                               obj
-                               args)
-                              obj)]
+              ; ----------- Implementações da linguagem CLASSES: ------------
+              [(equal? type 'self) (apply-env Δ '%self)]
+              [(equal? type 'send) (let ([args (values-of-exps (cadddr exp) Δ)]
+                                         [obj (value-of (cadr exp) Δ)])
+                                     (apply-method
+                                      (find-method (object-class-name obj) (caddr exp))
+                                      obj
+                                      args))]
+              [(equal? type 'super) (let ([args (value-of (cadr exp) Δ)]
+                                          [obj (apply-env Δ '%self)])
+                                      (apply-method
+                                       (find-method (apply-env Δ '%super) (car exp))
+                                       obj
+                                       args))]
+              [(equal? type 'new) (let ([args (values-of-exps (caddr exp) Δ)]
+                                        [obj (new-object (cadr exp))])
+                                    (let ([this-meth (find-method (object-class-name obj) 'initialize)])
+                                     ;((display (method? this-meth)) (display this-meth) (display "\n")
+                                      (apply-method
+                                       this-meth
+                                       obj
+                                       args))
+                                    obj)]
         
-        ;---------------------------------------------------------------                      
-        [else (error "operação não implementada")]))
+              ;---------------------------------------------------------------                      
+              [else (error "operação não implementada")]))
+      (if (number? exp) exp (apply-env Δ exp))))
 
 (define values-of-exps
   (lambda (exps env)
@@ -462,10 +502,13 @@ apply-env :: Env x Var -> Value
              (class c3 (c2 () ((method m1 () (32))
                               (method m2 () (33))))))
              (let o3 (new c3 ())
-               (send o3 (m3())))))
+               (send o3 m3 ()))))
    
 (value-of-program t1)
 
 
 ;(#(struct:method m1 (() (32)) c2 ()) #(struct:method m2 (() (33)) c2 ()) #(struct:method m1 (() (22)) c1 ()) #(struct:method m2 (() (23)) c1 ()) #(struct:method m3 (() (super m1 ())) c1 ()) #(struct:method initialize (() 1) object ()) #(struct:method m1 (() (send self m2 ())) object ()) #(struct:method m2 (() (13)) object ()))
-
+;#(struct:method () 1 object ())
+;(vector? #(struct:method () 1 object ()) 0) ;#t
+;(vector-ref #(struct:method () 1 object ()) 0)
+;(vector-map method? #(struct:method () 1 object ()))
