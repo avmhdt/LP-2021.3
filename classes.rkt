@@ -102,8 +102,11 @@ apply-env :: Env x Var -> Value
 
 (define (extend-env var value env)
   (lambda (svar)
-    (if (equal? svar var) value
-        (apply-env env svar))))
+    (if (list? var)
+        (if (memq svar var) (list-ref value (index-of var svar))
+            (apply-env env svar))
+        (if (equal? svar var) (if (list? value) (car value) value)
+            (apply-env env svar)))))
 
 (define (extend-env-rec name var body env)
   (lambda (svar)
@@ -183,7 +186,7 @@ apply-env :: Env x Var -> Value
       class-name
       (map
        (lambda (field-name)
-         (newref (list 'uninitialized-field field-name)))
+         (newref field-name));(list 'uninitialized-field field-name)))
        (class-fields (lookup-class class-name))))))
 
 #|
@@ -231,7 +234,7 @@ apply-env :: Env x Var -> Value
                                         (extend-env-with-self-and-super
                                          self super-name
                                          (extend-env fields (object-fields self)
-                                                     empty-env)))))(null)))
+                                                     empty-env)))))(display "m não é método\n")))
 
 
 
@@ -399,18 +402,19 @@ apply-env :: Env x Var -> Value
 ;------------------------------------------------------------------------------------------------------------------------------------------------
 ; Comportamento das expressões
 (define (value-of exp Δ)
-  (if (list? exp)
+  (if (list? exp) ;(and (list? exp) (not (equal? (length exp) 1)))
       (let
           ([type (car exp)])
       ; ----------- Retirado do IREF: ------------
         (cond [(equal? type 'lit) (cadr exp)]
               ; call-by-value e call-by-reference
-              ;[(equal? type 'var) (deref (apply-env Δ (cadr exp)))]
+              [(equal? type 'var) (deref (apply-env Δ (cadr exp)))]
               ; call-by-name
-              [(equal? type 'var) (define v (cadr exp))
-                                  (if (thunk? v) (value-of (thunk-exp v) (thunk-env v))
-                                      (deref (apply-env Δ v)))]
+              ;[(equal? type 'var) (define v (cadr exp))
+              ;                    (if (thunk? v) (value-of (thunk-exp v) (thunk-env v))
+              ;                        (deref (apply-env Δ v)))]
               [(equal? type 'dif) (- (value-of (cadr exp) Δ) (value-of (caddr exp) Δ))]
+              [(equal? type 'add) (+ (value-of (cadr exp) Δ) (value-of (caddr exp) Δ))]
               [(equal? type 'zero?) (= (value-of (cadr exp) Δ) 0)]
               [(equal? type 'let) (value-of (cadddr exp) (extend-env (cadr exp) (newref (value-of (caddr exp) Δ)) Δ))]
               [(equal? type 'if) (if (value-of (cadr exp) Δ)
@@ -420,7 +424,9 @@ apply-env :: Env x Var -> Value
               [(equal? type 'letrec) (value-of (car (cddddr exp)) (extend-env-rec (cadr exp) (caddr exp) (cadddr exp) Δ))]
 
               [(equal? type 'set) (let ([v (value-of (caddr exp) Δ)])
-                                    (setref! (apply-env Δ (cadr exp)) v)
+                                    (let ([this-val (value-of (cadr exp) Δ)])
+                                      (if (number? this-val) (setref! this-val v)
+                                          (setref! (apply-env Δ this-val) v)))
                                     v)]
         
               [(equal? type 'begin) (foldl (lambda (e acc)
@@ -429,6 +435,9 @@ apply-env :: Env x Var -> Value
                                            (cddr exp))]
         
               ; ----------- Implementações da linguagem CLASSES: ------------
+              [(equal? type 'list) (list (value-of (cadr exp) Δ) (value-of (caddr exp) Δ))]
+              [(equal? type 'self) (apply-env Δ '%self)]
+              
               [(equal? type 'self) (apply-env Δ '%self)]
               [(equal? type 'send) (let ([args (values-of-exps (cadddr exp) Δ)]
                                          [obj (value-of (cadr exp) Δ)])
@@ -436,10 +445,10 @@ apply-env :: Env x Var -> Value
                                       (find-method (object-class-name obj) (caddr exp))
                                       obj
                                       args))]
-              [(equal? type 'super) (let ([args (value-of (cadr exp) Δ)]
+              [(equal? type 'super) (let ([args (values-of-exps (caddr exp) Δ)]
                                           [obj (apply-env Δ '%self)])
                                       (apply-method
-                                       (find-method (apply-env Δ '%super) (car exp))
+                                       (find-method (apply-env Δ '%super) (cadr exp))
                                        obj
                                        args))]
               [(equal? type 'new) (let ([args (values-of-exps (caddr exp) Δ)]
@@ -454,7 +463,9 @@ apply-env :: Env x Var -> Value
         
               ;---------------------------------------------------------------                      
               [else (error "operação não implementada")]))
-      (if (number? exp) exp (apply-env Δ exp))))
+      (if (number? exp) exp
+          (if (equal? exp 'self) (apply-env Δ '%self)
+              (apply-env Δ exp)))))
 
 (define values-of-exps
   (lambda (exps env)
@@ -475,36 +486,39 @@ apply-env :: Env x Var -> Value
     (empty-store)
     (let ([class-decls (car prog)]
           [body (cadr prog)])
-      ((initialize-class-env! class-decls)
-        (value-of body the-class-env)))))
+      (initialize-class-env! class-decls)
+        (value-of body the-class-env))))
 
 ;------------------------------------------------------------------------------------------------------------------------------------------------
-(define exemplo '(
-            (class classe1 object (fields a b)  (( method initialize()(v1 lit 1)) (method teste() (lit 2 )) ))
-             (class classe2 classe1 (fields c d)  ((method initialize(5) (lit 5 ))))
-             (class classe3 classe2 (fields d e f g)  ((method initialize() (lit 5 ))))
-            ))
-
-(define metodos '(( method initialize()(v1 lit 1)) (method teste() (lit 2 )) ))
-
-;(define p2 '(class c1 object (fields x y) ((method m1 () (lit 1)))))
-
-;(value-of-program p2)
-
-;(init-all-classes exemplo)
-
 (define t1 '(((class c1 (object () ((method initialize () 1)
                                    (method m1 () (send self m2()))
-                                   (method m2 () (13)))))
-             (class c2 (c1 () ((method m1 () (22))
-                              (method m2 () (23))
+                                   (method m2 () 13))))
+             (class c2 (c1 () ((method m1 () 22)
+                              (method m2 () 23)
                               (method m3 () (super m1())))))
-             (class c3 (c2 () ((method m1 () (32))
-                              (method m2 () (33))))))
+             (class c3 (c2 () ((method m1 () 32)
+                              (method m2 () 33)))))
              (let o3 (new c3 ())
-               (send o3 m3 ()))))
-   
+               (send (var o3) m3 ()))))
+
+(define t2 '(((class c1 (object (i j) ((method initialize x (begin (set i (var x))
+                                                                     (set (var j) (dif (lit 0) (var x)))))
+                                       (method countup d (begin (set i (add (var i) (var d)))
+                                                                  (set j (dif (var j) (var d)))))
+                                       (method getstate () (list (var i) (var j)))))))
+             (let tmp1 (lit 0)
+               (let tmp2 (lit 0)
+                 (let o1 (new c1(3))
+                   (begin (set (var tmp1) (send (var o1) getstate()))
+                          (send (var o1) countup (2))
+                          (let tmp2 (send (var o1) getstate())
+                            (list (var tmp1) (var tmp2)))
+                          ))))))
+
+
+
 (value-of-program t1)
+(value-of-program t2)
 
 
 ;(#(struct:method m1 (() (32)) c2 ()) #(struct:method m2 (() (33)) c2 ()) #(struct:method m1 (() (22)) c1 ()) #(struct:method m2 (() (23)) c1 ()) #(struct:method m3 (() (super m1 ())) c1 ()) #(struct:method initialize (() 1) object ()) #(struct:method m1 (() (send self m2 ())) object ()) #(struct:method m2 (() (13)) object ()))
