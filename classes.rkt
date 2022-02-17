@@ -27,6 +27,7 @@ Expr -> (new Id Expr*)
      | (dif Expr Expr)
      | (zero? Expr)
      | (if Expr Expr Expr)
+     | Number
      | Id
      | (let Id Expr Expr)
      | (proc Id Expr)
@@ -34,6 +35,8 @@ Expr -> (new Id Expr*)
      | (letrec Id Id Expr Expr)
      | (set Id Expr)
      | (begin Expr*)
+     | (add Expr Expr)
+     | (list Expr Expr)
      
 ; Exemplo 1
 class c1 extends object
@@ -125,7 +128,7 @@ apply-env :: Env x Var -> Value
   (lambda (var)
     (error "No bind")))
 
-; Função extend-env moddificada para CLASSES
+; Função extend-env modificada para CLASSES
 (define (extend-env var value env)
   (lambda (svar)
     (if (list? var) ; Se a variável for uma lista, como quando tem vários fields (i j) em um objeto
